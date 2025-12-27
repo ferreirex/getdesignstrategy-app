@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Login from "./pages/Login";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import Dashboard from "./pages/Dashboard";
@@ -23,17 +24,41 @@ function saveProfile(profile: UserProfile) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
 }
 
+async function checkAuth(): Promise<boolean> {
+  const res = await fetch("https://api.getdesignstrategy.com/me", {
+    credentials: "include",
+  });
+  const data = await res.json();
+  return data.authenticated === true;
+}
+
 export default function App() {
+  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
-  // Load profile once on app start
+  // 1) Check auth on app start
   useEffect(() => {
-    const p = loadProfile();
-    if (p) setProfile(p);
+    checkAuth().then(setAuthenticated).catch(() => setAuthenticated(false));
   }, []);
 
-  // Gate: onboarding is mandatory
+  // 2) Load local profile once authenticated
+  useEffect(() => {
+    if (authenticated !== true) return;
+    const p = loadProfile();
+    if (p) setProfile(p);
+  }, [authenticated]);
+
+  // Auth gate
+  if (authenticated === null) {
+    return <div style={{ padding: 40 }}>Loading…</div>;
+  }
+
+  if (authenticated === false) {
+    return <Login onLoggedIn={() => setAuthenticated(true)} />;
+  }
+
+  // Onboarding gate (mandatory)
   if (!profile) {
     return (
       <Onboarding
