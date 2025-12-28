@@ -16,7 +16,7 @@ export type UserProfile = {
     | "Build scalable services"
     | "Build a small team"
     | "Clear, predictable systems";
-  details: string; // open text: problems + what they've tried
+  details: string;
   createdAtISO: string;
 };
 
@@ -34,20 +34,25 @@ export default function Onboarding({ onComplete }: Props) {
   const [goal12Months, setGoal12Months] = useState<UserProfile["goal12Months"]>("Fewer, better clients");
   const [details, setDetails] = useState("");
 
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const canSubmit = useMemo(() => details.trim().length >= 40, [details]);
 
-  function submit() {
-    if (!canSubmit) return;
-  
+  async function submit() {
+    if (!canSubmit || loading) return;
+
     const ok = window.confirm(
       "Confirmação final:\n\n" +
         "• Estas respostas vão orientar toda a tua experiência e recomendações.\n" +
         "• Não vais poder editar estas respostas mais tarde.\n\n" +
         "Queres confirmar e continuar?"
     );
-  
     if (!ok) return;
-  
+
+    setLoading(true);
+    setError(null);
+
     const profile: UserProfile = {
       businessType,
       pricingModel,
@@ -57,8 +62,43 @@ export default function Onboarding({ onComplete }: Props) {
       details: details.trim(),
       createdAtISO: new Date().toISOString(),
     };
-  
-    onComplete(profile);  
+
+    try {
+      const res = await fetch("https://api.getdesignstrategy.com/profile", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          business_type: profile.businessType,
+          pricing_model: profile.pricingModel,
+          monthly_revenue: profile.monthlyRevenue,
+          main_bottleneck: profile.mainBottleneck,
+          goal_12_months: profile.goal12Months,
+          details: profile.details,
+        }),
+      });
+
+      if (!res.ok) {
+        // If profile already exists, API returns 409
+        if (res.status === 409) {
+          setError("O teu onboarding já está bloqueado (já foi submetido anteriormente).");
+        } else {
+          const txt = await res.text().catch(() => "");
+          setError(`Erro ao guardar onboarding (${res.status}). ${txt}`);
+        }
+        setLoading(false);
+        return;
+      }
+
+      // Success -> continue app flow
+      onComplete(profile);
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      setLoading(false);
+      return;
+    }
+
+    setLoading(false);
   }
 
   const labelStyle: React.CSSProperties = { fontWeight: 700, marginBottom: 6 };
@@ -76,7 +116,11 @@ export default function Onboarding({ onComplete }: Props) {
       <div style={{ display: "grid", gap: 12 }}>
         <section style={cardStyle}>
           <div style={labelStyle}>1) What best describes your business?</div>
-          <select value={businessType} onChange={(e) => setBusinessType(e.target.value as any)} style={{ width: "100%", padding: 10 }}>
+          <select
+            value={businessType}
+            onChange={(e) => setBusinessType(e.target.value as any)}
+            style={{ width: "100%", padding: 10 }}
+          >
             <option>Freelancer</option>
             <option>Studio (2–4)</option>
             <option>Agency (5+)</option>
@@ -85,7 +129,11 @@ export default function Onboarding({ onComplete }: Props) {
 
         <section style={cardStyle}>
           <div style={labelStyle}>2) How do you currently price projects?</div>
-          <select value={pricingModel} onChange={(e) => setPricingModel(e.target.value as any)} style={{ width: "100%", padding: 10 }}>
+          <select
+            value={pricingModel}
+            onChange={(e) => setPricingModel(e.target.value as any)}
+            style={{ width: "100%", padding: 10 }}
+          >
             <option>Hourly</option>
             <option>Fixed project</option>
             <option>Productized packages</option>
@@ -96,7 +144,11 @@ export default function Onboarding({ onComplete }: Props) {
 
         <section style={cardStyle}>
           <div style={labelStyle}>3) Monthly revenue range (average)</div>
-          <select value={monthlyRevenue} onChange={(e) => setMonthlyRevenue(e.target.value as any)} style={{ width: "100%", padding: 10 }}>
+          <select
+            value={monthlyRevenue}
+            onChange={(e) => setMonthlyRevenue(e.target.value as any)}
+            style={{ width: "100%", padding: 10 }}
+          >
             <option>{"<£2k"}</option>
             <option>{"£2k–£5k"}</option>
             <option>{"£5k–£10k"}</option>
@@ -106,7 +158,11 @@ export default function Onboarding({ onComplete }: Props) {
 
         <section style={cardStyle}>
           <div style={labelStyle}>4) What is your main growth bottleneck right now?</div>
-          <select value={mainBottleneck} onChange={(e) => setMainBottleneck(e.target.value as any)} style={{ width: "100%", padding: 10 }}>
+          <select
+            value={mainBottleneck}
+            onChange={(e) => setMainBottleneck(e.target.value as any)}
+            style={{ width: "100%", padding: 10 }}
+          >
             <option>Low pricing / constant negotiation</option>
             <option>Weak leads</option>
             <option>Lack of processes</option>
@@ -117,7 +173,11 @@ export default function Onboarding({ onComplete }: Props) {
 
         <section style={cardStyle}>
           <div style={labelStyle}>5) Where do you want to be in 12 months?</div>
-          <select value={goal12Months} onChange={(e) => setGoal12Months(e.target.value as any)} style={{ width: "100%", padding: 10 }}>
+          <select
+            value={goal12Months}
+            onChange={(e) => setGoal12Months(e.target.value as any)}
+            style={{ width: "100%", padding: 10 }}
+          >
             <option>Earn more without more hours</option>
             <option>Fewer, better clients</option>
             <option>Build scalable services</option>
@@ -131,7 +191,7 @@ export default function Onboarding({ onComplete }: Props) {
           <textarea
             value={details}
             onChange={(e) => setDetails(e.target.value)}
-            placeholder="Example: I’m stuck on hourly pricing. I tried fixed packages but clients compared me to cheap competitors. I get leads but negotiations kill margin..."
+            placeholder="Example: I’m stuck on hourly pricing. I tried fixed packages but clients compared me to cheap competitors..."
             style={{ width: "100%", minHeight: 140, padding: 10 }}
           />
           <div style={{ marginTop: 8, color: "#666", fontSize: 12 }}>
@@ -139,20 +199,27 @@ export default function Onboarding({ onComplete }: Props) {
           </div>
         </section>
 
+        {error && (
+          <div style={{ padding: 12, border: "1px solid #f2c2c2", borderRadius: 10 }}>
+            <div style={{ color: "#b00020", fontWeight: 700 }}>Error</div>
+            <div style={{ color: "#b00020" }}>{error}</div>
+          </div>
+        )}
+
         <div style={{ display: "flex", gap: 10 }}>
           <button
             onClick={submit}
-            disabled={!canSubmit}
+            disabled={!canSubmit || loading}
             style={{
               padding: "10px 12px",
               borderRadius: 10,
               border: "1px solid #ddd",
-              background: canSubmit ? "black" : "#999",
+              background: canSubmit && !loading ? "black" : "#999",
               color: "white",
-              cursor: canSubmit ? "pointer" : "not-allowed",
+              cursor: canSubmit && !loading ? "pointer" : "not-allowed",
             }}
           >
-            Finish onboarding
+            {loading ? "Saving…" : "Finish onboarding"}
           </button>
         </div>
       </div>
