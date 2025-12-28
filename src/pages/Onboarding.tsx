@@ -24,6 +24,8 @@ type Props = {
   onComplete: (profile: UserProfile) => void;
 };
 
+const API_ORIGIN = "https://api.getdesignstrategy.com";
+
 export default function Onboarding({ onComplete }: Props) {
   const [businessType, setBusinessType] = useState<UserProfile["businessType"]>("Freelancer");
   const [pricingModel, setPricingModel] = useState<UserProfile["pricingModel"]>("Hourly");
@@ -40,7 +42,12 @@ export default function Onboarding({ onComplete }: Props) {
   const canSubmit = useMemo(() => details.trim().length >= 40, [details]);
 
   async function submit() {
-    if (!canSubmit || loading) return;
+    console.log("SUBMIT CLICKED");
+
+    if (!canSubmit || loading) {
+      console.log("SUBMIT BLOCKED", { canSubmit, loading, len: details.trim().length });
+      return;
+    }
 
     const ok = window.confirm(
       "Confirmação final:\n\n" +
@@ -63,8 +70,10 @@ export default function Onboarding({ onComplete }: Props) {
       createdAtISO: new Date().toISOString(),
     };
 
+    console.log("POSTING TO /profile", profile);
+
     try {
-      const res = await fetch("https://api.getdesignstrategy.com/profile", {
+      const res = await fetch(`${API_ORIGIN}/profile`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
@@ -78,27 +87,49 @@ export default function Onboarding({ onComplete }: Props) {
         }),
       });
 
+      const responseText = await res.text().catch(() => "");
+      console.log("POST /profile RESULT", { status: res.status, ok: res.ok, responseText });
+
+      // If already exists: load it and continue (no error UI)
+      if (res.status === 409) {
+        const g = await fetch(`${API_ORIGIN}/profile`, {
+          method: "GET",
+          credentials: "include",
+        });
+        const data = await g.json().catch(() => null);
+
+        console.log("GET /profile AFTER 409", { status: g.status, data });
+
+        if (g.ok && data?.exists) {
+          onComplete(profile);
+          setLoading(false);
+          return;
+        }
+
+        setError("O teu onboarding já existe, mas não consegui carregá-lo. Faz refresh e tenta novamente.");
+        setLoading(false);
+        return;
+      }
+
       if (!res.ok) {
-        // If profile already exists, API returns 409
-        if (res.status === 409) {
-          setError("O teu onboarding já está bloqueado (já foi submetido anteriormente).");
+        if (res.status === 401) {
+          setError("Sessão não autenticada (401). Faz logout/login e tenta novamente.");
         } else {
-          const txt = await res.text().catch(() => "");
-          setError(`Erro ao guardar onboarding (${res.status}). ${txt}`);
+          setError(`Erro ao guardar onboarding (${res.status}). ${responseText}`);
         }
         setLoading(false);
         return;
       }
 
-      // Success -> continue app flow
+      // Success
       onComplete(profile);
-    } catch (e: any) {
-      setError(String(e?.message || e));
       setLoading(false);
       return;
+    } catch (e: any) {
+      console.log("POST /profile EXCEPTION", e);
+      setError(String(e?.message || e));
+      setLoading(false);
     }
-
-    setLoading(false);
   }
 
   const labelStyle: React.CSSProperties = { fontWeight: 700, marginBottom: 6 };

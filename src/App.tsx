@@ -1,75 +1,122 @@
 import { useEffect, useState } from "react";
-import Login from "./pages/Login";
 import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
 import Onboarding, { type UserProfile } from "./pages/Onboarding";
+import Login from "./pages/Login";
 
 type Page = "dashboard" | "chat";
 
-const STORAGE_KEY = "gds_user_profile_v1";
+type AuthState =
+  | { status: "loading" }
+  | { status: "unauthenticated" }
+  | { status: "authenticated"; userId: string };
 
-function loadProfile(): UserProfile | null {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as UserProfile;
-  } catch {
-    return null;
-  }
-}
+type ProfileState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "missing" }
+  | { status: "ready"; profile: any }
+  | { status: "error"; message: string };
 
-function saveProfile(profile: UserProfile) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
-}
+const API_ORIGIN = "https://api.getdesignstrategy.com";
 
-async function checkAuth(): Promise<boolean> {
-  const res = await fetch("https://api.getdesignstrategy.com/me", {
+async function apiGet(path: string) {
+  const res = await fetch(`${API_ORIGIN}${path}`, {
+    method: "GET",
     credentials: "include",
   });
-  const data = await res.json();
-  return data.authenticated === true;
+  const text = await res.text().catch(() => "");
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+  return { res, data };
 }
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [page, setPage] = useState<Page>("dashboard");
-  const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+  const [profileState, setProfileState] = useState<ProfileState>({ status: "idle" });
 
-  // 1) Check auth on app start
+  // 1) Check session
   useEffect(() => {
-    checkAuth().then(setAuthenticated).catch(() => setAuthenticated(false));
+    (async () => {
+      const { res, data } = await apiGet("/me");
+      if (!res.ok) {
+        setAuth({ status: "unauthenticated" });
+        return;
+      }
+      if (data?.authenticated) {
+        setAuth({ status: "authenticated", userId: data.userId });
+      } else {
+        setAuth({ status: "unauthenticated" });
+      }
+    })();
   }, []);
 
-  // 2) Load local profile once authenticated
+  // 2) After authenticated, load profile from DB
   useEffect(() => {
-    if (authenticated !== true) return;
-    const p = loadProfile();
-    if (p) setProfile(p);
-  }, [authenticated]);
+    if (auth.status !== "authenticated") return;
 
-  // Auth gate
-  if (authenticated === null) {
-    return <div style={{ padding: 40 }}>Loading…</div>;
+    (async () => {
+      setProfileState({ status: "loading" });
+      const { res, data } = await apiGet("/profile");
+      if (!res.ok) {
+        setProfileState({ status: "error", message: `Failed to load profile (${res.status})` });
+        return;
+      }
+      if (data?.exists) {
+        setProfileState({ status: "ready", profile: data.profile });
+      } else {
+        setProfileState({ status: "missing" });
+      }
+    })();
+  }, [auth.status]);
+
+  // Gate 0: session check
+  if (auth.status === "loading") {
+    return <div style={{ padding: 20 }}>Loading…</div>;
   }
 
-  if (authenticated === false) {
-    return <Login onLoggedIn={() => setAuthenticated(true)} />;
+  // Gate 1: Login mandatory
+  if (auth.status === "unauthenticated") {
+    return <Login />;
   }
 
-  // Onboarding gate (mandatory)
-  if (!profile) {
+  // Gate 2: Profile check
+  if (profileState.status === "idle" || profileState.status === "loading") {
+    return <div style={{ padding: 20 }}>Loading profile…</div>;
+  }
+
+  if (profileState.status === "error") {
+    return (
+      <div style={{ padding: 20 }}>
+        <div style={{ fontWeight: 800, marginBottom: 8 }}>Error</div>
+        <div>{profileState.message}</div>
+      </div>
+    );
+  }
+
+  // Gate 3: Onboarding mandatory (DB-based)
+  if (profileState.status === "missing") {
     return (
       <Onboarding
-        onComplete={(p) => {
-          saveProfile(p);
-          setProfile(p);
+        onComplete={async (_p: UserProfile) => {
+          // After onboarding saved, reload profile from DB (source of truth)
+          setProfileState({ status: "loading" });
+          const { res, data } = await apiGet("/profile");
+          if (res.ok && data?.exists) setProfileState({ status: "ready", profile: data.profile });
+          else setProfileState({ status: "missing" });
         }}
       />
     );
   }
 
+  // App shell
   const title = page === "dashboard" ? "Dashboard" : "Chat";
   const subtitle =
     page === "dashboard"
@@ -85,7 +132,7 @@ export default function App() {
 
         <div style={{ flex: 1 }}>
           {page === "dashboard" ? (
-            <Dashboard profile={profile} onGoToChat={() => setPage("chat")} />
+            <Dashboard profile={profileState.profile} onGoToChat={() => setPage("chat")} />
           ) : (
             <Chat />
           )}
