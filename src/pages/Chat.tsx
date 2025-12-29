@@ -36,33 +36,110 @@ function Bubble({ role, content }: { role: Msg["role"]; content: string }) {
   );
 }
 
+function parseISOToMs(iso: string) {
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? t : Date.now();
+}
+
 export default function Chat() {
-  const [messages, setMessages] = useState<Msg[]>([
-    {
-      id: uid("a"),
-      role: "assistant",
-      content:
-        "Tell me what you’re working on right now (project + offer), and what feels like the biggest friction in getting better clients or charging more.",
-      ts: Date.now(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
 
   const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const endRef = useRef<HTMLDivElement | null>(null);
 
+  // Load history once on mount
+  useEffect(() => {
+    (async () => {
+      setLoadingHistory(true);
+      setError(null);
+
+      try {
+        const res = await fetch(`${API_ORIGIN}/chat/history`, {
+          method: "GET",
+          credentials: "include",
+        });
+
+        const txt = await res.text().catch(() => "");
+        let data: any = null;
+        try {
+          data = txt ? JSON.parse(txt) : null;
+        } catch {
+          data = txt;
+        }
+
+        if (!res.ok) {
+          if (res.status === 401) {
+            setError("Not authenticated. Please log in again.");
+          } else {
+            setError(`History API error (${res.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
+          }
+          setMessages([
+            {
+              id: uid("a"),
+              role: "assistant",
+              content:
+                "I couldn’t load your history. Try refreshing. If it persists, you may need to log in again.",
+              ts: Date.now(),
+            },
+          ]);
+          setLoadingHistory(false);
+          return;
+        }
+
+        const hist = Array.isArray(data?.history) ? data.history : [];
+        if (hist.length === 0) {
+          // First-time UX
+          setMessages([
+            {
+              id: uid("a"),
+              role: "assistant",
+              content:
+                "Tell me what you’re working on right now (project + offer), and what feels like the biggest friction in getting better clients or charging more.",
+              ts: Date.now(),
+            },
+          ]);
+          setLoadingHistory(false);
+          return;
+        }
+
+        const mapped: Msg[] = hist.map((r: any) => ({
+          id: String(r.id || uid("h")),
+          role: r.role === "assistant" ? "assistant" : "user",
+          content: String(r.content || ""),
+          ts: parseISOToMs(String(r.created_at || "")),
+        }));
+
+        setMessages(mapped);
+        setLoadingHistory(false);
+      } catch (e: any) {
+        setError(String(e?.message || e));
+        setMessages([
+          {
+            id: uid("a"),
+            role: "assistant",
+            content: "I couldn’t load your history due to a network error. Try refreshing.",
+            ts: Date.now(),
+          },
+        ]);
+        setLoadingHistory(false);
+      }
+    })();
+  }, []);
+
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, sending, loadingHistory]);
 
   async function send() {
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || sending) return;
 
     setError(null);
-    setLoading(true);
+    setSending(true);
 
     const userMsg: Msg = { id: uid("u"), role: "user", content: text, ts: Date.now() };
     setMessages((prev) => [...prev, userMsg]);
@@ -90,7 +167,7 @@ export default function Chat() {
         } else {
           setError(`Chat API error (${res.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
         }
-        setLoading(false);
+        setSending(false);
         return;
       }
 
@@ -98,18 +175,17 @@ export default function Chat() {
       const assistantMsg: Msg = { id: uid("a"), role: "assistant", content: reply, ts: Date.now() };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      setLoading(false);
+      setSending(false);
     } catch (e: any) {
       setError(String(e?.message || e));
-      setLoading(false);
+      setSending(false);
     }
   }
 
   return (
     <div style={{ padding: 18, maxWidth: 980, height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ color: "#999", fontSize: 13 }}>
-        This strategist uses your onboarding profile (locked) to stay consistent. If you ask something outside the
-        contract, you’ll see a warning.
+        This strategist uses your onboarding profile (locked) to stay consistent. History is stored per user.
       </div>
 
       <div
@@ -124,13 +200,13 @@ export default function Chat() {
           background: "rgba(255,255,255,0.01)",
         }}
       >
-        {messages.map((m) => (
-          <Bubble key={m.id} role={m.role} content={m.content} />
-        ))}
-
-        {loading && (
-          <Bubble role="assistant" content="Thinking…" />
+        {loadingHistory ? (
+          <Bubble role="assistant" content="Loading history…" />
+        ) : (
+          messages.map((m) => <Bubble key={m.id} role={m.role} content={m.content} />)
         )}
+
+        {sending && <Bubble role="assistant" content="Thinking…" />}
 
         <div ref={endRef} />
       </div>
@@ -161,14 +237,14 @@ export default function Chat() {
         />
         <button
           onClick={send}
-          disabled={loading || !input.trim()}
+          disabled={sending || !input.trim()}
           style={{
             padding: "12px 14px",
             borderRadius: 12,
             border: "1px solid #333",
-            background: loading || !input.trim() ? "#444" : "black",
+            background: sending || !input.trim() ? "#444" : "black",
             color: "white",
-            cursor: loading || !input.trim() ? "not-allowed" : "pointer",
+            cursor: sending || !input.trim() ? "not-allowed" : "pointer",
             fontWeight: 800,
           }}
         >
