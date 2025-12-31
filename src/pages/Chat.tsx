@@ -1,180 +1,129 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type Msg = {
-  id: string;
+type ChatItem = {
+  id?: string;
   role: "user" | "assistant";
   content: string;
-  ts: number;
+  created_at?: string;
 };
 
-const API_ORIGIN = "https://api.getdesignstrategy.com";
-
-function uid(prefix = "m") {
-  return `${prefix}_${crypto.randomUUID()}`;
-}
-
-function Bubble({ role, content }: { role: Msg["role"]; content: string }) {
-  const isUser = role === "user";
-  return (
-    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }}>
-      <div
-        style={{
-          maxWidth: 760,
-          padding: 12,
-          borderRadius: 14,
-          border: "1px solid #222",
-          background: isUser ? "black" : "rgba(255,255,255,0.02)",
-          color: isUser ? "white" : "#ddd",
-          whiteSpace: "pre-wrap",
-          lineHeight: 1.5,
-          fontSize: 14,
-        }}
-      >
-        {content}
-      </div>
-    </div>
-  );
-}
-
-function parseISOToMs(iso: string) {
-  const t = Date.parse(iso);
-  return Number.isFinite(t) ? t : Date.now();
-}
+const API_BASE = "https://api.getdesignstrategy.com";
 
 export default function Chat() {
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(true);
-
-  const [input, setInput] = useState("");
+  const [history, setHistory] = useState<ChatItem[]>([]);
+  const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
+
   const [error, setError] = useState<string | null>(null);
+  const [paywall, setPaywall] = useState<{ show: boolean; text?: string } | null>(null);
+  const [checkoutLoading, setCheckoutLoading] = useState<"monthly" | "lifetime" | null>(null);
 
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  // Load history once on mount
+  const canSend = useMemo(() => message.trim().length > 0 && !sending, [message, sending]);
+
   useEffect(() => {
-    (async () => {
-      setLoadingHistory(true);
-      setError(null);
+    let cancelled = false;
 
+    async function loadHistory() {
       try {
-        const res = await fetch(`${API_ORIGIN}/chat/history`, {
-          method: "GET",
-          credentials: "include",
-        });
+        const res = await fetch(`${API_BASE}/chat/history`, { credentials: "include" });
+        const data = await res.json().catch(() => null);
 
-        const txt = await res.text().catch(() => "");
-        let data: any = null;
-        try {
-          data = txt ? JSON.parse(txt) : null;
-        } catch {
-          data = txt;
+        if (cancelled) return;
+        if (!res.ok) return;
+
+        if (data?.history && Array.isArray(data.history)) {
+          setHistory(data.history);
         }
-
-        if (!res.ok) {
-          if (res.status === 401) {
-            setError("Not authenticated. Please log in again.");
-          } else {
-            setError(`History API error (${res.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
-          }
-          setMessages([
-            {
-              id: uid("a"),
-              role: "assistant",
-              content:
-                "I couldn’t load your history. Try refreshing. If it persists, you may need to log in again.",
-              ts: Date.now(),
-            },
-          ]);
-          setLoadingHistory(false);
-          return;
-        }
-
-        const hist = Array.isArray(data?.history) ? data.history : [];
-        if (hist.length === 0) {
-          // First-time UX
-          setMessages([
-            {
-              id: uid("a"),
-              role: "assistant",
-              content:
-                "Tell me what you’re working on right now (project + offer), and what feels like the biggest friction in getting better clients or charging more.",
-              ts: Date.now(),
-            },
-          ]);
-          setLoadingHistory(false);
-          return;
-        }
-
-        const mapped: Msg[] = hist.map((r: any) => ({
-          id: String(r.id || uid("h")),
-          role: r.role === "assistant" ? "assistant" : "user",
-          content: String(r.content || ""),
-          ts: parseISOToMs(String(r.created_at || "")),
-        }));
-
-        setMessages(mapped);
-        setLoadingHistory(false);
-      } catch (e: any) {
-        setError(String(e?.message || e));
-        setMessages([
-          {
-            id: uid("a"),
-            role: "assistant",
-            content: "I couldn’t load your history due to a network error. Try refreshing.",
-            ts: Date.now(),
-          },
-        ]);
-        setLoadingHistory(false);
+      } catch {
+        // ignore
       }
-    })();
+    }
+
+    loadHistory();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, sending, loadingHistory]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history, paywall]);
 
-  async function send() {
-    const text = input.trim();
-    if (!text || sending) return;
-
-    setError(null);
-    setSending(true);
-
-    const userMsg: Msg = { id: uid("u"), role: "user", content: text, ts: Date.now() };
-    setMessages((prev) => [...prev, userMsg]);
-    setInput("");
+  async function startCheckout(plan: "monthly" | "lifetime") {
+    if (checkoutLoading) return;
+    setCheckoutLoading(plan);
 
     try {
-      const res = await fetch(`${API_ORIGIN}/chat`, {
+      const res = await fetch(`${API_BASE}/billing/checkout`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ plan }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(data?.message || data?.error || `Checkout failed (${res.status}).`);
+        setCheckoutLoading(null);
+        return;
+      }
+
+      if (!data?.url) {
+        setError("Checkout URL missing.");
+        setCheckoutLoading(null);
+        return;
+      }
+
+      window.location.href = data.url;
+    } catch (e: any) {
+      setError(String(e?.message || e));
+      setCheckoutLoading(null);
+    }
+  }
+
+  async function send() {
+    if (!canSend) return;
+
+    const text = message.trim();
+    setMessage("");
+    setSending(true);
+    setError(null);
+    setPaywall(null);
+
+    // optimistic UI
+    setHistory((h) => [...h, { role: "user", content: text }]);
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: text }),
       });
 
-      const bodyText = await res.text().catch(() => "");
-      let data: any = null;
-      try {
-        data = bodyText ? JSON.parse(bodyText) : null;
-      } catch {
-        data = bodyText;
-      }
+      const data = await res.json().catch(() => null);
 
-      if (!res.ok) {
-        if (res.status === 401) {
-          setError("Not authenticated. Please log in again.");
-        } else {
-          setError(`Chat API error (${res.status}): ${typeof data === "string" ? data : JSON.stringify(data)}`);
-        }
+      // Paywall
+      if (res.status === 402) {
+        setPaywall({
+          show: true,
+          text: data?.message || "Free limit reached. Please upgrade to continue.",
+        });
         setSending(false);
         return;
       }
 
-      const reply = data?.reply || "(No reply)";
-      const assistantMsg: Msg = { id: uid("a"), role: "assistant", content: reply, ts: Date.now() };
-      setMessages((prev) => [...prev, assistantMsg]);
+      if (!res.ok) {
+        const msg = data?.detail || data?.message || data?.error || `Request failed (${res.status}).`;
+        setError(msg);
+        setSending(false);
+        return;
+      }
 
+      const reply = String(data?.reply || "");
+      setHistory((h) => [...h, { role: "assistant", content: reply }]);
       setSending(false);
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -182,73 +131,122 @@ export default function Chat() {
     }
   }
 
-  return (
-    <div style={{ padding: 18, maxWidth: 980, height: "100%", display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ color: "#999", fontSize: 13 }}>
-        This strategist uses your onboarding profile (locked) to stay consistent. History is stored per user.
-      </div>
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  }
 
-      <div
-        style={{
-          flex: 1,
-          border: "1px solid #222",
-          borderRadius: 14,
-          padding: 14,
-          overflow: "auto",
-          display: "grid",
-          gap: 10,
-          background: "rgba(255,255,255,0.01)",
-        }}
-      >
-        {loadingHistory ? (
-          <Bubble role="assistant" content="Loading history…" />
-        ) : (
-          messages.map((m) => <Bubble key={m.id} role={m.role} content={m.content} />)
+  const bubble = (role: "user" | "assistant"): React.CSSProperties => ({
+    maxWidth: 760,
+    padding: 12,
+    borderRadius: 12,
+    border: "1px solid #eee",
+    background: role === "user" ? "black" : "white",
+    color: role === "user" ? "white" : "black",
+    alignSelf: role === "user" ? "flex-end" : "flex-start",
+    whiteSpace: "pre-wrap",
+    lineHeight: 1.45,
+  });
+
+  return (
+    <div style={{ padding: 20, height: "100%", display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
+        {history.map((m, idx) => (
+          <div key={m.id || idx} style={bubble(m.role)}>
+            {m.content}
+          </div>
+        ))}
+
+        {paywall?.show && (
+          <div
+            style={{
+              border: "1px solid #f2c2c2",
+              borderRadius: 14,
+              padding: 14,
+              background: "white",
+              maxWidth: 760,
+            }}
+          >
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>Upgrade required</div>
+            <div style={{ color: "#333", marginBottom: 10 }}>{paywall.text}</div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button
+                onClick={() => startCheckout("monthly")}
+                disabled={checkoutLoading !== null}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: checkoutLoading === "monthly" ? "#999" : "black",
+                  color: "white",
+                  cursor: checkoutLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                {checkoutLoading === "monthly" ? "Redirecting…" : "Upgrade — £9/month"}
+              </button>
+
+              <button
+                onClick={() => startCheckout("lifetime")}
+                disabled={checkoutLoading !== null}
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: "1px solid #ddd",
+                  background: checkoutLoading === "lifetime" ? "#999" : "white",
+                  color: "black",
+                  cursor: checkoutLoading ? "not-allowed" : "pointer",
+                }}
+              >
+                {checkoutLoading === "lifetime" ? "Redirecting…" : "Get Lifetime — £49 one-time"}
+              </button>
+            </div>
+          </div>
         )}
 
-        {sending && <Bubble role="assistant" content="Thinking…" />}
-
-        <div ref={endRef} />
+        <div ref={bottomRef} />
       </div>
 
       {error && (
-        <div style={{ padding: 12, border: "1px solid #f2c2c2", borderRadius: 12, color: "#b00020" }}>
-          {error}
+        <div style={{ marginTop: 10, padding: 10, border: "1px solid #f2c2c2", borderRadius: 10 }}>
+          <div style={{ color: "#b00020", fontWeight: 800 }}>Error</div>
+          <div style={{ color: "#b00020" }}>{error}</div>
         </div>
       )}
 
-      <div style={{ display: "flex", gap: 10 }}>
-        <input
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Type your message..."
+      <div style={{ marginTop: 12, display: "flex", gap: 10 }}>
+        <textarea
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="Write your message…"
           style={{
             flex: 1,
-            padding: 12,
+            minHeight: 44,
+            maxHeight: 140,
+            padding: 10,
             borderRadius: 12,
-            border: "1px solid #222",
-            background: "transparent",
-            color: "white",
-            outline: "none",
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") send();
+            border: "1px solid #ddd",
+            resize: "vertical",
           }}
         />
+
         <button
           onClick={send}
-          disabled={sending || !input.trim()}
+          disabled={!canSend}
           style={{
-            padding: "12px 14px",
+            padding: "10px 12px",
             borderRadius: 12,
-            border: "1px solid #333",
-            background: sending || !input.trim() ? "#444" : "black",
+            border: "1px solid #ddd",
+            background: canSend ? "black" : "#999",
             color: "white",
-            cursor: sending || !input.trim() ? "not-allowed" : "pointer",
-            fontWeight: 800,
+            cursor: canSend ? "pointer" : "not-allowed",
+            minWidth: 110,
           }}
         >
-          Send
+          {sending ? "Sending…" : "Send"}
         </button>
       </div>
     </div>
