@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import ProfileSummary from "../components/ProfileSummary";
 
+type Offers = {
+  ok: true;
+  offers: {
+    monthly: { enabled: boolean; price: string };
+    lifetime: { enabled: boolean; price: string };
+  };
+};
+
 type BillingStatus =
   | {
       ok: true;
@@ -21,10 +29,13 @@ type Props = {
 const API_BASE = "https://api.getdesignstrategy.com";
 
 export default function Dashboard({ profile, onGoToChat }: Props) {
+  const [offers, setOffers] = useState<Offers | null>(null);
   const [billing, setBilling] = useState<BillingStatus | null>(null);
-  const [loadingBilling, setLoadingBilling] = useState(true);
-  const [billingError, setBillingError] = useState<string | null>(null);
 
+  const [loadingOffers, setLoadingOffers] = useState(true);
+  const [loadingBilling, setLoadingBilling] = useState(true);
+
+  const [error, setError] = useState<string | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<"monthly" | "lifetime" | null>(null);
 
   const isActive = useMemo(() => {
@@ -40,47 +51,57 @@ export default function Dashboard({ profile, onGoToChat }: Props) {
     return "Free";
   }, [billing]);
 
+  const lifetimeVisible = useMemo(() => {
+    if (!offers) return true; // fallback: show until loaded
+    return Boolean(offers.offers?.lifetime?.enabled);
+  }, [offers]);
+
   useEffect(() => {
     let cancelled = false;
 
+    async function loadOffers() {
+      setLoadingOffers(true);
+      try {
+        const res = await fetch(`${API_BASE}/billing/offers`, { method: "GET" });
+        const data = (await res.json().catch(() => null)) as Offers | null;
+        if (cancelled) return;
+        if (res.ok && data?.ok) setOffers(data);
+      } catch {
+        // ignore (fallback keeps lifetime visible)
+      } finally {
+        if (!cancelled) setLoadingOffers(false);
+      }
+    }
+
     async function loadBilling() {
       setLoadingBilling(true);
-      setBillingError(null);
-
       try {
-        const res = await fetch(`${API_BASE}/billing/status`, {
-          method: "GET",
-          credentials: "include",
-        });
-
+        const res = await fetch(`${API_BASE}/billing/status`, { method: "GET", credentials: "include" });
         const data = (await res.json().catch(() => null)) as BillingStatus | null;
         if (cancelled) return;
 
         if (!res.ok || !data) {
-          setBillingError(`Billing status failed (${res.status}).`);
+          setError(`Billing status failed (${res.status}).`);
           setBilling(null);
-          setLoadingBilling(false);
           return;
         }
-
         if ("error" in data) {
-          setBillingError(data.error || "Billing status error.");
+          setError(data.error || "Billing status error.");
           setBilling(data);
-          setLoadingBilling(false);
           return;
         }
-
         setBilling(data);
-        setLoadingBilling(false);
       } catch (e: any) {
         if (cancelled) return;
-        setBillingError(String(e?.message || e));
-        setBilling(null);
-        setLoadingBilling(false);
+        setError(String(e?.message || e));
+      } finally {
+        if (!cancelled) setLoadingBilling(false);
       }
     }
 
+    loadOffers();
     loadBilling();
+
     return () => {
       cancelled = true;
     };
@@ -90,7 +111,7 @@ export default function Dashboard({ profile, onGoToChat }: Props) {
     if (checkoutLoading) return;
 
     setCheckoutLoading(plan);
-    setBillingError(null);
+    setError(null);
 
     try {
       const res = await fetch(`${API_BASE}/billing/checkout`, {
@@ -104,21 +125,20 @@ export default function Dashboard({ profile, onGoToChat }: Props) {
 
       if (!res.ok) {
         const msg = data?.error || data?.message || `Checkout failed (${res.status}).`;
-        setBillingError(msg);
+        setError(msg);
         setCheckoutLoading(null);
         return;
       }
 
       if (!data?.url) {
-        setBillingError("Checkout URL missing.");
+        setError("Checkout URL missing.");
         setCheckoutLoading(null);
         return;
       }
 
-      // Redirect to Stripe Checkout
       window.location.href = data.url;
     } catch (e: any) {
-      setBillingError(String(e?.message || e));
+      setError(String(e?.message || e));
       setCheckoutLoading(null);
     }
   }
@@ -140,7 +160,7 @@ export default function Dashboard({ profile, onGoToChat }: Props) {
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
             <div>
               <div style={h2}>Your profile snapshot</div>
-              <div style={muted}>This is based on your locked onboarding answers.</div>
+              <div style={muted}>Based on your locked onboarding answers.</div>
             </div>
 
             <button
@@ -168,8 +188,8 @@ export default function Dashboard({ profile, onGoToChat }: Props) {
 
           {loadingBilling ? (
             <div style={muted}>Loading billing status…</div>
-          ) : billingError ? (
-            <div style={{ ...muted, color: "#b00020" }}>{billingError}</div>
+          ) : error ? (
+            <div style={{ ...muted, color: "#b00020" }}>{error}</div>
           ) : (
             <div style={{ display: "grid", gap: 10 }}>
               <div style={muted}>
@@ -195,32 +215,37 @@ export default function Dashboard({ profile, onGoToChat }: Props) {
                       cursor: checkoutLoading ? "not-allowed" : "pointer",
                     }}
                   >
-                    {checkoutLoading === "monthly" ? "Redirecting…" : "Upgrade — £9/month"}
+                    {checkoutLoading === "monthly"
+                      ? "Redirecting…"
+                      : `Upgrade — ${offers?.offers?.monthly?.price || "£9/month"}`}
                   </button>
 
-                  <button
-                    onClick={() => startCheckout("lifetime")}
-                    disabled={checkoutLoading !== null}
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 10,
-                      border: "1px solid #ddd",
-                      background: checkoutLoading === "lifetime" ? "#999" : "white",
-                      color: "black",
-                      cursor: checkoutLoading ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {checkoutLoading === "lifetime" ? "Redirecting…" : "Get Lifetime — £49 one-time"}
-                  </button>
+                  {lifetimeVisible && (
+                    <button
+                      onClick={() => startCheckout("lifetime")}
+                      disabled={checkoutLoading !== null}
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: "1px solid #ddd",
+                        background: checkoutLoading === "lifetime" ? "#999" : "white",
+                        color: "black",
+                        cursor: checkoutLoading ? "not-allowed" : "pointer",
+                      }}
+                    >
+                      {checkoutLoading === "lifetime"
+                        ? "Redirecting…"
+                        : `Get Lifetime — ${offers?.offers?.lifetime?.price || "£49 one-time"}`}
+                    </button>
+                  )}
+
+                  {!loadingOffers && !lifetimeVisible && (
+                    <div style={muted}>Lifetime is currently unavailable.</div>
+                  )}
                 </div>
               )}
 
-              {isActive && (
-                <div style={muted}>
-                  You have full access. If you ever don’t get access immediately after payment, refresh the page (webhook
-                  needs a moment).
-                </div>
-              )}
+              {isActive && <div style={muted}>You have full access.</div>}
             </div>
           )}
         </section>

@@ -7,6 +7,14 @@ type ChatItem = {
   created_at?: string;
 };
 
+type Offers = {
+  ok: true;
+  offers: {
+    monthly: { enabled: boolean; price: string };
+    lifetime: { enabled: boolean; price: string };
+  };
+};
+
 const API_BASE = "https://api.getdesignstrategy.com";
 
 export default function Chat() {
@@ -18,12 +26,29 @@ export default function Chat() {
   const [paywall, setPaywall] = useState<{ show: boolean; text?: string } | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<"monthly" | "lifetime" | null>(null);
 
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const [offers, setOffers] = useState<Offers | null>(null);
 
+  const bottomRef = useRef<HTMLDivElement | null>(null);
   const canSend = useMemo(() => message.trim().length > 0 && !sending, [message, sending]);
+
+  const lifetimeVisible = useMemo(() => {
+    if (!offers) return true; // fallback
+    return Boolean(offers.offers?.lifetime?.enabled);
+  }, [offers]);
 
   useEffect(() => {
     let cancelled = false;
+
+    async function loadOffers() {
+      try {
+        const res = await fetch(`${API_BASE}/billing/offers`, { method: "GET" });
+        const data = (await res.json().catch(() => null)) as Offers | null;
+        if (cancelled) return;
+        if (res.ok && data?.ok) setOffers(data);
+      } catch {
+        // ignore
+      }
+    }
 
     async function loadHistory() {
       try {
@@ -41,7 +66,9 @@ export default function Chat() {
       }
     }
 
+    loadOffers();
     loadHistory();
+
     return () => {
       cancelled = true;
     };
@@ -54,6 +81,7 @@ export default function Chat() {
   async function startCheckout(plan: "monthly" | "lifetime") {
     if (checkoutLoading) return;
     setCheckoutLoading(plan);
+    setError(null);
 
     try {
       const res = await fetch(`${API_BASE}/billing/checkout`, {
@@ -92,7 +120,6 @@ export default function Chat() {
     setError(null);
     setPaywall(null);
 
-    // optimistic UI
     setHistory((h) => [...h, { role: "user", content: text }]);
 
     try {
@@ -105,7 +132,6 @@ export default function Chat() {
 
       const data = await res.json().catch(() => null);
 
-      // Paywall
       if (res.status === 402) {
         setPaywall({
           show: true,
@@ -185,23 +211,29 @@ export default function Chat() {
                   cursor: checkoutLoading ? "not-allowed" : "pointer",
                 }}
               >
-                {checkoutLoading === "monthly" ? "Redirecting…" : "Upgrade — £9/month"}
+                {checkoutLoading === "monthly"
+                  ? "Redirecting…"
+                  : `Upgrade — ${offers?.offers?.monthly?.price || "£9/month"}`}
               </button>
 
-              <button
-                onClick={() => startCheckout("lifetime")}
-                disabled={checkoutLoading !== null}
-                style={{
-                  padding: "10px 12px",
-                  borderRadius: 10,
-                  border: "1px solid #ddd",
-                  background: checkoutLoading === "lifetime" ? "#999" : "white",
-                  color: "black",
-                  cursor: checkoutLoading ? "not-allowed" : "pointer",
-                }}
-              >
-                {checkoutLoading === "lifetime" ? "Redirecting…" : "Get Lifetime — £49 one-time"}
-              </button>
+              {lifetimeVisible && (
+                <button
+                  onClick={() => startCheckout("lifetime")}
+                  disabled={checkoutLoading !== null}
+                  style={{
+                    padding: "10px 12px",
+                    borderRadius: 10,
+                    border: "1px solid #ddd",
+                    background: checkoutLoading === "lifetime" ? "#999" : "white",
+                    color: "black",
+                    cursor: checkoutLoading ? "not-allowed" : "pointer",
+                  }}
+                >
+                  {checkoutLoading === "lifetime"
+                    ? "Redirecting…"
+                    : `Get Lifetime — ${offers?.offers?.lifetime?.price || "£49 one-time"}`}
+                </button>
+              )}
             </div>
           </div>
         )}
