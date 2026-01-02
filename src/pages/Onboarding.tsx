@@ -90,36 +90,13 @@ export default function Onboarding({ onComplete }: Props) {
       const responseText = await res.text().catch(() => "");
       console.log("POST /profile RESULT", { status: res.status, ok: res.ok, responseText });
 
-      // If already exists: load it and continue (no error UI)
+      // 409 = profile já existe → tratar como sucesso (não mostrar erro)
       if (res.status === 409) {
-        const g = await fetch(`${API_ORIGIN}/profile`, {
-          method: "GET",
-          credentials: "include",
-        });
-        const data = await g.json().catch(() => null);
-
-        console.log("GET /profile AFTER 409", { status: g.status, data });
-
-        if (g.ok && data?.exists) {
-          onComplete(profile);
-          setLoading(false);
-          return;
-        }
-
-        setError("O teu onboarding já existe, mas não consegui carregá-lo. Faz refresh e tenta novamente.");
+        onComplete(profile);
         setLoading(false);
         return;
       }
 
-      if (!res.ok) {
-        if (res.status === 401) {
-          setError("Sessão não autenticada (401). Faz logout/login e tenta novamente.");
-        } else {
-          setError(`Erro ao guardar onboarding (${res.status}). ${responseText}`);
-        }
-        setLoading(false);
-        return;
-      }
 
       // Success
       onComplete(profile);

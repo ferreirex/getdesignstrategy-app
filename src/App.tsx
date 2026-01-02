@@ -40,7 +40,9 @@ async function apiGet(path: string) {
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-  const [profileState, setProfileState] = useState<ProfileState>({ status: "idle" });
+  const [profileState, setProfileState] = useState<ProfileState>({
+    status: "idle",
+  });
 
   // 1) Check session
   useEffect(() => {
@@ -64,16 +66,26 @@ export default function App() {
 
     (async () => {
       setProfileState({ status: "loading" });
+
       const { res, data } = await apiGet("/profile");
       if (!res.ok) {
-        setProfileState({ status: "error", message: `Failed to load profile (${res.status})` });
+        setProfileState({
+          status: "error",
+          message: `Failed to load profile (${res.status})`,
+        });
         return;
       }
+
+      // IMPORTANT: treat exists=true as "ready" even if profile payload is missing/null.
+      // This prevents users from being stuck in onboarding when profile already exists.
       if (data?.exists) {
-        setProfileState({ status: "ready", profile: data.profile });
+        // Mesmo que o backend não devolva o profile completo,
+        // exists=true significa que o onboarding já foi feito
+        setProfileState({ status: "ready", profile: data?.profile ?? {} });
       } else {
         setProfileState({ status: "missing" });
       }
+      
     })();
   }, [auth.status]);
 
@@ -106,11 +118,19 @@ export default function App() {
     return (
       <Onboarding
         onComplete={async (_p: UserProfile) => {
-          // After onboarding saved, reload profile from DB (source of truth)
+          // After onboarding saved (or already existed), reload profile from DB (source of truth)
           setProfileState({ status: "loading" });
+
           const { res, data } = await apiGet("/profile");
-          if (res.ok && data?.exists) setProfileState({ status: "ready", profile: data.profile });
-          else setProfileState({ status: "missing" });
+
+          // If profile exists, leave onboarding no matter what.
+          if (res.ok && data?.exists) {
+            setProfileState({ status: "ready", profile: data?.profile ?? {} });
+            return;
+          }
+
+          // If still not exists, keep onboarding
+          setProfileState({ status: "missing" });
         }}
       />
     );
