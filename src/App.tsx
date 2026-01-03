@@ -96,8 +96,23 @@ export default function App() {
 
   // Gate 1: Login mandatory
   if (auth.status === "unauthenticated") {
-    return <Login />;
+    return (
+      <Login
+        onLoggedIn={async () => {
+          // Revalida sessão após login
+          setAuth({ status: "loading" });
+  
+          const { res, data } = await apiGet("/me");
+          if (res.ok && data?.authenticated) {
+            setAuth({ status: "authenticated", userId: data.userId });
+          } else {
+            setAuth({ status: "unauthenticated" });
+          }
+        }}
+      />
+    );
   }
+  
 
   // Gate 2: Profile check
   if (profileState.status === "idle" || profileState.status === "loading") {
