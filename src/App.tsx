@@ -3,15 +3,16 @@ import Sidebar from "./components/Sidebar";
 import Header from "./components/Header";
 import Dashboard from "./pages/Dashboard";
 import Chat from "./pages/Chat";
+import Feedback from "./pages/Feedback";
 import Onboarding, { type UserProfile } from "./pages/Onboarding";
 import Login from "./pages/Login";
 
-type Page = "dashboard" | "chat";
+type Page = "dashboard" | "chat" | "feedback";
 
 type AuthState =
   | { status: "loading" }
   | { status: "unauthenticated" }
-  | { status: "authenticated"; userId: string };
+  | { status: "authenticated"; userId: string; isAdmin: boolean };
 
 type ProfileState =
   | { status: "idle" }
@@ -40,9 +41,7 @@ async function apiGet(path: string) {
 export default function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-  const [profileState, setProfileState] = useState<ProfileState>({
-    status: "idle",
-  });
+  const [profileState, setProfileState] = useState<ProfileState>({ status: "idle" });
 
   // 1) Check session
   useEffect(() => {
@@ -53,7 +52,11 @@ export default function App() {
         return;
       }
       if (data?.authenticated) {
-        setAuth({ status: "authenticated", userId: data.userId });
+        setAuth({
+          status: "authenticated",
+          userId: data.userId,
+          isAdmin: Boolean(data?.isAdmin),
+        });
       } else {
         setAuth({ status: "unauthenticated" });
       }
@@ -69,42 +72,35 @@ export default function App() {
 
       const { res, data } = await apiGet("/profile");
       if (!res.ok) {
-        setProfileState({
-          status: "error",
-          message: `Failed to load profile (${res.status})`,
-        });
+        setProfileState({ status: "error", message: `Failed to load profile (${res.status})` });
         return;
       }
 
-      // IMPORTANT: treat exists=true as "ready" even if profile payload is missing/null.
-      // This prevents users from being stuck in onboarding when profile already exists.
+      // IMPORTANT: exists=true means onboarding already done
       if (data?.exists) {
-        // Mesmo que o backend não devolva o profile completo,
-        // exists=true significa que o onboarding já foi feito
         setProfileState({ status: "ready", profile: data?.profile ?? {} });
       } else {
         setProfileState({ status: "missing" });
       }
-      
     })();
   }, [auth.status]);
 
   // Gate 0: session check
-  if (auth.status === "loading") {
-    return <div style={{ padding: 20 }}>Loading…</div>;
-  }
+  if (auth.status === "loading") return <div style={{ padding: 20 }}>Loading…</div>;
 
   // Gate 1: Login mandatory
   if (auth.status === "unauthenticated") {
     return (
       <Login
         onLoggedIn={async () => {
-          // Revalida sessão após login
           setAuth({ status: "loading" });
-  
           const { res, data } = await apiGet("/me");
           if (res.ok && data?.authenticated) {
-            setAuth({ status: "authenticated", userId: data.userId });
+            setAuth({
+              status: "authenticated",
+              userId: data.userId,
+              isAdmin: Boolean(data?.isAdmin),
+            });
           } else {
             setAuth({ status: "unauthenticated" });
           }
@@ -112,7 +108,6 @@ export default function App() {
       />
     );
   }
-  
 
   // Gate 2: Profile check
   if (profileState.status === "idle" || profileState.status === "loading") {
@@ -128,23 +123,17 @@ export default function App() {
     );
   }
 
-  // Gate 3: Onboarding mandatory (DB-based)
+  // Gate 3: Onboarding mandatory
   if (profileState.status === "missing") {
     return (
       <Onboarding
         onComplete={async (_p: UserProfile) => {
-          // After onboarding saved (or already existed), reload profile from DB (source of truth)
           setProfileState({ status: "loading" });
-
           const { res, data } = await apiGet("/profile");
-
-          // If profile exists, leave onboarding no matter what.
           if (res.ok && data?.exists) {
             setProfileState({ status: "ready", profile: data?.profile ?? {} });
             return;
           }
-
-          // If still not exists, keep onboarding
           setProfileState({ status: "missing" });
         }}
       />
@@ -152,15 +141,25 @@ export default function App() {
   }
 
   // App shell
-  const title = page === "dashboard" ? "Dashboard" : "Chat";
+  const title = page === "dashboard" ? "Dashboard" : page === "chat" ? "Chat" : "Feedback";
   const subtitle =
     page === "dashboard"
       ? "Your current focus and next step (based on your onboarding)."
-      : "Your Design Business Strategist (context-aware).";
+      : page === "chat"
+        ? "Your Design Business Strategist (context-aware)."
+        : "Admin-only: ratings and comments from beta testers.";
 
   return (
     <div style={{ display: "flex", minHeight: "100vh" }}>
-      <Sidebar current={page} onNavigate={setPage} />
+      <Sidebar
+        current={page}
+        onNavigate={(p) => {
+          // hard gate: non-admin cannot access feedback
+          if (p === "feedback" && !auth.isAdmin) return;
+          setPage(p);
+        }}
+        isAdmin={auth.isAdmin}
+      />
 
       <main style={{ flex: 1, display: "flex", flexDirection: "column" }}>
         <Header title={title} subtitle={subtitle} />
@@ -168,8 +167,10 @@ export default function App() {
         <div style={{ flex: 1 }}>
           {page === "dashboard" ? (
             <Dashboard profile={profileState.profile} onGoToChat={() => setPage("chat")} />
-          ) : (
+          ) : page === "chat" ? (
             <Chat />
+          ) : (
+            <Feedback />
           )}
         </div>
       </main>
