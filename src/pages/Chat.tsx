@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+
 
 type ChatItem = {
   id?: string;
@@ -222,7 +225,8 @@ export default function Chat() {
     background: role === "user" ? "black" : "white",
     color: role === "user" ? "white" : "black",
     alignSelf: role === "user" ? "flex-end" : "flex-start",
-    whiteSpace: "pre-wrap",
+    // Markdown já controla quebras; mantemos wrap seguro
+    overflowWrap: "anywhere",
     lineHeight: 1.45,
   });
 
@@ -239,11 +243,34 @@ export default function Chat() {
       </div>
 
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
-        {history.map((m, idx) => (
-          <div key={m.id || idx} style={bubble(m.role)}>
-            {m.content}
+      {history.map((m, idx) => (
+  <div key={m.id || idx} style={bubble(m.role)}>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        h3: ({ children }) => (
+          <div style={{ fontWeight: 800, fontSize: 16, marginTop: 12, marginBottom: 6 }}>
+            {children}
           </div>
-        ))}
+        ),
+        hr: () => <div style={{ borderTop: "1px solid #eee", margin: "12px 0" }} />,
+        ul: ({ children }) => <ul style={{ margin: "6px 0 6px 18px" }}>{children}</ul>,
+        ol: ({ children }) => <ol style={{ margin: "6px 0 6px 18px" }}>{children}</ol>,
+        li: ({ children }) => <li style={{ margin: "4px 0" }}>{children}</li>,
+        p: ({ children }) => <div style={{ margin: "6px 0" }}>{children}</div>,
+        strong: ({ children }) => <strong style={{ fontWeight: 800 }}>{children}</strong>,
+        a: ({ href, children }) => (
+          <a href={href} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>
+            {children}
+          </a>
+        ),
+      }}
+    >
+      {m.content}
+    </ReactMarkdown>
+  </div>
+))}
+
 
         {paywall?.show && (
           <div
