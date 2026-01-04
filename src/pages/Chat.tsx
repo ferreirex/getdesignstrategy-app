@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-
 type ChatItem = {
   id?: string;
   role: "user" | "assistant";
@@ -53,6 +52,16 @@ export default function Chat() {
   const plan = me?.plan || "free";
   const remaining = Number(me?.remaining_messages ?? -1);
   const isFreeBlocked = plan === "free" && remaining === 0;
+
+  // Quick replies (beta guidance)
+  const lastMsg = history.length ? history[history.length - 1] : null;
+  const showQuickReplies = lastMsg?.role === "assistant" && !sending && !paywall?.show;
+
+  const quickReplies = [
+    "Ajuda-me a definir um nicho e uma oferta em 1 frase.",
+    "Quero aumentar preços sem perder clientes — por onde começo?",
+    "Preciso de mais leads esta semana — dá-me um plano de 7 dias.",
+  ];
 
   useEffect(() => {
     let cancelled = false;
@@ -210,6 +219,20 @@ export default function Chat() {
     }
   }
 
+  // Quick reply handler: set message and call send safely
+  function sendQuickReply(text: string) {
+    if (sending) return;
+    if (isFreeBlocked) {
+      setPaywall({ show: true, text: "Free limit reached. Please upgrade to continue." });
+      return;
+    }
+    setMessage(text);
+    // Call send on next tick so canSend sees updated message
+    setTimeout(() => {
+      send();
+    }, 0);
+  }
+
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -225,9 +248,8 @@ export default function Chat() {
     background: role === "user" ? "black" : "white",
     color: role === "user" ? "white" : "black",
     alignSelf: role === "user" ? "flex-end" : "flex-start",
-    // Markdown já controla quebras; mantemos wrap seguro
-    overflowWrap: "anywhere",
     lineHeight: 1.45,
+    overflowWrap: "anywhere",
   });
 
   return (
@@ -243,66 +265,86 @@ export default function Chat() {
       </div>
 
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
-      {history.map((m, idx) => (
-  <div key={m.id || idx} style={bubble(m.role)}>
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      components={{
-        h3: ({ children }) => (
-          <div style={{ fontWeight: 900, fontSize: 16, marginTop: 14, marginBottom: 8 }}>
-            {children}
+        {history.map((m, idx) => (
+          <div key={m.id || idx} style={bubble(m.role)}>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                h3: ({ children }) => (
+                  <div style={{ fontWeight: 900, fontSize: 16, marginTop: 14, marginBottom: 8 }}>
+                    {children}
+                  </div>
+                ),
+                h4: ({ children }) => (
+                  <div style={{ fontWeight: 850, fontSize: 14, marginTop: 12, marginBottom: 6 }}>
+                    {children}
+                  </div>
+                ),
+                hr: () => <div style={{ borderTop: "1px solid #eee", margin: "14px 0" }} />,
+                ul: ({ children }) => <ul style={{ margin: "8px 0 8px 18px" }}>{children}</ul>,
+                ol: ({ children }) => <ol style={{ margin: "8px 0 8px 18px" }}>{children}</ol>,
+                li: ({ children }) => <li style={{ margin: "6px 0" }}>{children}</li>,
+                p: ({ children }) => <div style={{ margin: "8px 0", lineHeight: 1.55 }}>{children}</div>,
+                strong: ({ children }) => <strong style={{ fontWeight: 850 }}>{children}</strong>,
+                blockquote: ({ children }) => (
+                  <div
+                    style={{
+                      borderLeft: "3px solid #ddd",
+                      paddingLeft: 12,
+                      margin: "10px 0",
+                      color: "#333",
+                    }}
+                  >
+                    {children}
+                  </div>
+                ),
+                code: ({ children }) => (
+                  <code
+                    style={{
+                      fontFamily:
+                        'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                      fontSize: 12,
+                      background: "#f6f6f6",
+                      padding: "2px 6px",
+                      borderRadius: 6,
+                    }}
+                  >
+                    {children}
+                  </code>
+                ),
+                a: ({ href, children }) => (
+                  <a href={href} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>
+                    {children}
+                  </a>
+                ),
+              }}
+            >
+              {m.content}
+            </ReactMarkdown>
           </div>
-        ),
-        h4: ({ children }) => (
-          <div style={{ fontWeight: 850, fontSize: 14, marginTop: 12, marginBottom: 6 }}>
-            {children}
-          </div>
-        ),
-        hr: () => <div style={{ borderTop: "1px solid #eee", margin: "14px 0" }} />,
-        ul: ({ children }) => <ul style={{ margin: "8px 0 8px 18px" }}>{children}</ul>,
-        ol: ({ children }) => <ol style={{ margin: "8px 0 8px 18px" }}>{children}</ol>,
-        li: ({ children }) => <li style={{ margin: "6px 0" }}>{children}</li>,
-        p: ({ children }) => <div style={{ margin: "8px 0", lineHeight: 1.55 }}>{children}</div>,
-        strong: ({ children }) => <strong style={{ fontWeight: 850 }}>{children}</strong>,
-        blockquote: ({ children }) => (
-          <div
-            style={{
-              borderLeft: "3px solid #ddd",
-              paddingLeft: 12,
-              margin: "10px 0",
-              color: "#333",
-            }}
-          >
-            {children}
-          </div>
-        ),
-        code: ({ children }) => (
-          <code
-            style={{
-              fontFamily:
-                'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-              fontSize: 12,
-              background: "#f6f6f6",
-              padding: "2px 6px",
-              borderRadius: 6,
-            }}
-          >
-            {children}
-          </code>
-        ),
-        a: ({ href, children }) => (
-          <a href={href} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>
-            {children}
-          </a>
-        ),
-      }}
-      
-    >
-      {m.content}
-    </ReactMarkdown>
-  </div>
-))}
+        ))}
 
+        {showQuickReplies && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 6, maxWidth: 760 }}>
+            {quickReplies.map((t) => (
+              <button
+                key={t}
+                onClick={() => sendQuickReply(t)}
+                disabled={sending || isFreeBlocked}
+                style={{
+                  padding: "8px 10px",
+                  borderRadius: 999,
+                  border: "1px solid #ddd",
+                  background: "white",
+                  cursor: sending || isFreeBlocked ? "not-allowed" : "pointer",
+                  fontSize: 13,
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        )}
 
         {paywall?.show && (
           <div
