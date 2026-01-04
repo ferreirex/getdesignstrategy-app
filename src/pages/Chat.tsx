@@ -15,6 +15,15 @@ type Offers = {
   };
 };
 
+type Me = {
+  authenticated: boolean;
+  userId?: string;
+  plan?: "free" | "monthly" | "lifetime";
+  free_limit?: number;
+  used_messages?: number;
+  remaining_messages?: number;
+};
+
 const API_BASE = "https://api.getdesignstrategy.com";
 
 export default function Chat() {
@@ -27,14 +36,20 @@ export default function Chat() {
   const [checkoutLoading, setCheckoutLoading] = useState<"monthly" | "lifetime" | null>(null);
 
   const [offers, setOffers] = useState<Offers | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
+
   const canSend = useMemo(() => message.trim().length > 0 && !sending, [message, sending]);
 
   const lifetimeVisible = useMemo(() => {
     if (!offers) return true; // fallback
     return Boolean(offers.offers?.lifetime?.enabled);
   }, [offers]);
+
+  const plan = me?.plan || "free";
+  const remaining = Number(me?.remaining_messages ?? -1);
+  const isFreeBlocked = plan === "free" && remaining === 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -66,8 +81,20 @@ export default function Chat() {
       }
     }
 
+    async function loadMe() {
+      try {
+        const res = await fetch(`${API_BASE}/me`, { credentials: "include" });
+        const data = (await res.json().catch(() => null)) as Me | null;
+        if (cancelled) return;
+        if (res.ok && data?.authenticated) setMe(data);
+      } catch {
+        // ignore
+      }
+    }
+
     loadOffers();
     loadHistory();
+    loadMe();
 
     return () => {
       cancelled = true;
@@ -114,6 +141,15 @@ export default function Chat() {
   async function send() {
     if (!canSend) return;
 
+    // Better UX: if already out of free messages, show paywall immediately
+    if (isFreeBlocked) {
+      setPaywall({
+        show: true,
+        text: "Free limit reached. Please upgrade to continue.",
+      });
+      return;
+    }
+
     const text = message.trim();
     setMessage("");
     setSending(true);
@@ -137,6 +173,10 @@ export default function Chat() {
           show: true,
           text: data?.message || "Free limit reached. Please upgrade to continue.",
         });
+
+        // keep local remaining consistent
+        setMe((m) => (m ? { ...m, remaining_messages: 0 } : m));
+
         setSending(false);
         return;
       }
@@ -150,6 +190,16 @@ export default function Chat() {
 
       const reply = String(data?.reply || "");
       setHistory((h) => [...h, { role: "assistant", content: reply }]);
+
+      // decrement remaining locally (only for free plan)
+      setMe((m) => {
+        if (!m) return m;
+        if ((m.plan || "free") !== "free") return m;
+        const r = Number(m.remaining_messages ?? -1);
+        if (r <= 0) return { ...m, remaining_messages: 0 };
+        return { ...m, remaining_messages: r - 1 };
+      });
+
       setSending(false);
     } catch (e: any) {
       setError(String(e?.message || e));
@@ -178,6 +228,16 @@ export default function Chat() {
 
   return (
     <div style={{ padding: 20, height: "100%", display: "flex", flexDirection: "column" }}>
+      <div style={{ marginBottom: 10, display: "flex", justifyContent: "space-between", gap: 10 }}>
+        <div style={{ fontWeight: 700 }}>
+          {plan === "free" && remaining >= 0
+            ? `Free plan — ${remaining} messages remaining`
+            : plan !== "free"
+              ? `Plan: ${plan}`
+              : ""}
+        </div>
+      </div>
+
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
         {history.map((m, idx) => (
           <div key={m.id || idx} style={bubble(m.role)}>
@@ -253,7 +313,8 @@ export default function Chat() {
           value={message}
           onChange={(e) => setMessage(e.target.value)}
           onKeyDown={onKeyDown}
-          placeholder="Write your message…"
+          disabled={isFreeBlocked}
+          placeholder={isFreeBlocked ? "Upgrade required to continue…" : "Write your message…"}
           style={{
             flex: 1,
             minHeight: 44,
@@ -267,14 +328,14 @@ export default function Chat() {
 
         <button
           onClick={send}
-          disabled={!canSend}
+          disabled={!canSend || isFreeBlocked}
           style={{
             padding: "10px 12px",
             borderRadius: 12,
             border: "1px solid #ddd",
-            background: canSend ? "black" : "#999",
+            background: canSend && !isFreeBlocked ? "black" : "#999",
             color: "white",
-            cursor: canSend ? "pointer" : "not-allowed",
+            cursor: canSend && !isFreeBlocked ? "pointer" : "not-allowed",
             minWidth: 110,
           }}
         >
