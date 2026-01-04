@@ -249,22 +249,54 @@ export default function Chat() {
       remarkPlugins={[remarkGfm]}
       components={{
         h3: ({ children }) => (
-          <div style={{ fontWeight: 800, fontSize: 16, marginTop: 12, marginBottom: 6 }}>
+          <div style={{ fontWeight: 900, fontSize: 16, marginTop: 14, marginBottom: 8 }}>
             {children}
           </div>
         ),
-        hr: () => <div style={{ borderTop: "1px solid #eee", margin: "12px 0" }} />,
-        ul: ({ children }) => <ul style={{ margin: "6px 0 6px 18px" }}>{children}</ul>,
-        ol: ({ children }) => <ol style={{ margin: "6px 0 6px 18px" }}>{children}</ol>,
-        li: ({ children }) => <li style={{ margin: "4px 0" }}>{children}</li>,
-        p: ({ children }) => <div style={{ margin: "6px 0" }}>{children}</div>,
-        strong: ({ children }) => <strong style={{ fontWeight: 800 }}>{children}</strong>,
+        h4: ({ children }) => (
+          <div style={{ fontWeight: 850, fontSize: 14, marginTop: 12, marginBottom: 6 }}>
+            {children}
+          </div>
+        ),
+        hr: () => <div style={{ borderTop: "1px solid #eee", margin: "14px 0" }} />,
+        ul: ({ children }) => <ul style={{ margin: "8px 0 8px 18px" }}>{children}</ul>,
+        ol: ({ children }) => <ol style={{ margin: "8px 0 8px 18px" }}>{children}</ol>,
+        li: ({ children }) => <li style={{ margin: "6px 0" }}>{children}</li>,
+        p: ({ children }) => <div style={{ margin: "8px 0", lineHeight: 1.55 }}>{children}</div>,
+        strong: ({ children }) => <strong style={{ fontWeight: 850 }}>{children}</strong>,
+        blockquote: ({ children }) => (
+          <div
+            style={{
+              borderLeft: "3px solid #ddd",
+              paddingLeft: 12,
+              margin: "10px 0",
+              color: "#333",
+            }}
+          >
+            {children}
+          </div>
+        ),
+        code: ({ children }) => (
+          <code
+            style={{
+              fontFamily:
+                'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+              fontSize: 12,
+              background: "#f6f6f6",
+              padding: "2px 6px",
+              borderRadius: 6,
+            }}
+          >
+            {children}
+          </code>
+        ),
         a: ({ href, children }) => (
           <a href={href} target="_blank" rel="noreferrer" style={{ textDecoration: "underline" }}>
             {children}
           </a>
         ),
       }}
+      
     >
       {m.content}
     </ReactMarkdown>
