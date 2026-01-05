@@ -3,11 +3,13 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 type ChatItem = {
-  id?: string;
+  id?: string; // assistantMessageId
   role: "user" | "assistant";
   content: string;
   created_at?: string;
+  feedback?: "up" | "down";
 };
+
 
 type Offers = {
   ok: true;
@@ -201,7 +203,13 @@ export default function Chat() {
       }
 
       const reply = String(data?.reply || "");
-      setHistory((h) => [...h, { role: "assistant", content: reply }]);
+const assistantId = String(data?.assistantMessageId || "");
+
+setHistory((h) => [
+  ...h,
+  { role: "assistant", content: reply, id: assistantId },
+]);
+
 
       // decrement remaining locally (only for free plan)
       setMe((m) => {
@@ -232,6 +240,40 @@ export default function Chat() {
       send();
     }, 0);
   }
+
+  async function sendFeedback(
+    msg: ChatItem,
+    rating: "up" | "down"
+  ) {
+    if (!msg.id) return;
+  
+    const comment =
+      rating === "down"
+        ? window.prompt("O que faltou nesta resposta? (opcional)")
+        : null;
+  
+    try {
+      await fetch(`${API_BASE}/chat/feedback`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assistantMessageId: msg.id,
+          rating,
+          comment,
+        }),
+      });
+  
+      setHistory((h) =>
+        h.map((m) =>
+          m === msg ? { ...m, feedback: rating } : m
+        )
+      );
+    } catch {
+      alert("Erro ao enviar feedback. Tenta novamente.");
+    }
+  }
+  
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -265,8 +307,8 @@ export default function Chat() {
       </div>
 
       <div style={{ flex: 1, overflow: "auto", display: "flex", flexDirection: "column", gap: 10 }}>
-        {history.map((m, idx) => (
-          <div key={m.id || idx} style={bubble(m.role)}>
+      {history.map((m, idx) => (
+  <div key={m.id || idx} style={{ ...bubble(m.role), position: "relative" }}>
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               components={{
@@ -321,6 +363,41 @@ export default function Chat() {
             >
               {m.content}
             </ReactMarkdown>
+            {m.role === "assistant" && !m.feedback && (
+  <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+    <button
+      onClick={() => sendFeedback(m, "up")}
+      style={{
+        padding: "4px 8px",
+        borderRadius: 6,
+        border: "1px solid #ddd",
+        cursor: "pointer",
+        background: "white",
+      }}
+    >
+      👍
+    </button>
+    <button
+      onClick={() => sendFeedback(m, "down")}
+      style={{
+        padding: "4px 8px",
+        borderRadius: 6,
+        border: "1px solid #ddd",
+        cursor: "pointer",
+        background: "white",
+      }}
+    >
+      👎
+    </button>
+  </div>
+)}
+
+{m.role === "assistant" && m.feedback && (
+  <div style={{ marginTop: 6, fontSize: 12, color: "#666" }}>
+    Feedback enviado {m.feedback === "up" ? "👍" : "👎"}
+  </div>
+)}
+
           </div>
         ))}
 
